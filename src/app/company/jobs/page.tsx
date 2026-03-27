@@ -4,8 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ethers } from "ethers";
+import { XOConnectProvider } from "xo-connect";
 import { useAuth } from "@/context/AuthContext";
+import { useXO } from "@/context/XOProvider";
 import { createClient } from "@/lib/supabase/client";
+
+const xoProvider = new XOConnectProvider({ debug: false });
 import { Button } from "@/components/ui/Button";
 import { ESCROW_ADDRESS, ESCROW_ABI, RSK_TESTNET_CHAIN_ID } from "@/lib/escrow";
 import { ArrowLeft, Briefcase, Plus, Trash2, X, Coins, ExternalLink } from "lucide-react";
@@ -31,6 +35,7 @@ const TYPE_BADGE_STYLES: Record<string, string> = {
 export default function CompanyJobsPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
+  const { getSigner, isConnected } = useXO();
   const supabase = useMemo(() => createClient(), []);
 
   const [companyId, setCompanyId] = useState<string | null>(null);
@@ -170,30 +175,19 @@ export default function CompanyJobsPage() {
     setEscrowError("");
 
     try {
-      const win = window as unknown as { ethereum?: { request: (a: { method: string; params?: unknown[] }) => Promise<unknown> } };
-      if (!win.ethereum) throw new Error("Instalá MetaMask o usá Beexo desde el celular.");
+      if (!isConnected) throw new Error("Conectá tu wallet primero (Beexo o MetaMask).");
 
-      const chainId = await win.ethereum.request({ method: "eth_chainId" }) as string;
-      if (chainId !== RSK_TESTNET_CHAIN_ID) {
-        await win.ethereum.request({
+      // Intentar cambiar a RSK Testnet
+      try {
+        await xoProvider.request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: RSK_TESTNET_CHAIN_ID }],
-        }).catch(async () => {
-          await win.ethereum!.request({
-            method: "wallet_addEthereumChain",
-            params: [{
-              chainId: RSK_TESTNET_CHAIN_ID,
-              chainName: "RSK Testnet",
-              nativeCurrency: { name: "tRBTC", symbol: "tRBTC", decimals: 18 },
-              rpcUrls: ["https://public-node.testnet.rsk.co"],
-              blockExplorerUrls: ["https://explorer.testnet.rsk.co"],
-            }],
-          });
         });
+      } catch {
+        // Si falla el switch, continuar igual (Beexo puede tener RSK configurado)
       }
 
-      const provider = new ethers.BrowserProvider(win.ethereum as ethers.Eip1193Provider);
-      const signer = await provider.getSigner();
+      const signer = await getSigner();
       const contract = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, signer);
 
       const deadlineTimestamp = Math.floor(Date.now() / 1000) + parseInt(escrowDays) * 86400;
